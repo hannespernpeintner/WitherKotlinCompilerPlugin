@@ -6,16 +6,27 @@ import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.codegen.FunctionCodegen
 import org.jetbrains.kotlin.codegen.ImplementationBodyCodegen
 import org.jetbrains.kotlin.codegen.extensions.ExpressionCodegenExtension
+import org.jetbrains.kotlin.descriptors.CallableMemberDescriptor
+import org.jetbrains.kotlin.descriptors.ClassConstructorDescriptor
+import org.jetbrains.kotlin.descriptors.ClassDescriptor
+import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.PropertyDescriptor
+import org.jetbrains.kotlin.descriptors.SimpleFunctionDescriptor
+import org.jetbrains.kotlin.descriptors.annotations.Annotations
+import org.jetbrains.kotlin.descriptors.impl.SimpleFunctionDescriptorImpl
 import org.jetbrains.kotlin.name.FqName
+import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.resolve.BindingContext
+import org.jetbrains.kotlin.resolve.extensions.SyntheticResolveExtension
 import org.jetbrains.kotlin.resolve.jvm.diagnostics.JvmDeclarationOrigin
 import org.jetbrains.org.objectweb.asm.Opcodes
 import org.jetbrains.org.objectweb.asm.commons.InstructionAdapter
 
 class DataClassWitherGenerationExtension(val messageCollector: MessageCollector) : ExpressionCodegenExtension {
 
-    private fun getAnnotations() = listOf("de.hanno.kotlin.compiler.plugins.annotations.Wither")
+    val compilerMessageLocation = CompilerMessageLocation.create("")
+    private fun MessageCollector.warn(msg: String) = report(WARNING, msg, compilerMessageLocation)
+
 
     override fun generateClassSyntheticParts(codegen: ImplementationBodyCodegen) {
         messageCollector.report(
@@ -27,16 +38,15 @@ class DataClassWitherGenerationExtension(val messageCollector: MessageCollector)
         if(!classDescriptor.isData) return
 
 
-        val hasWitherAnnotation = getAnnotations().any { classDescriptor.annotations.hasAnnotation(FqName(it)) }
+        val hasWitherAnnotation = annotations.any { classDescriptor.annotations.hasAnnotation(FqName(it)) }
 
         messageCollector.report(
                 WARNING,
                 "*** class ${classDescriptor.name} is annotated with wither: $hasWitherAnnotation ***",
                 CompilerMessageLocation.create(""))
 
-        val constructor = classDescriptor.constructors.first { it.isPrimary }
-        val properties: List<PropertyDescriptor> = constructor.valueParameters
-                .mapNotNull { codegen.bindingContext.get(BindingContext.VALUE_PARAMETER_AS_PROPERTY, it) }
+        val constructor = classDescriptor.primaryConstructor
+        val properties: List<PropertyDescriptor> = constructor.getProperties(codegen)
 
 
         properties.forEach  { property ->
@@ -77,5 +87,15 @@ class DataClassWitherGenerationExtension(val messageCollector: MessageCollector)
 
             FunctionCodegen.endVisit(mv, witherFunctionName, codegen.myClass)
         }
+    }
+
+    private fun ClassConstructorDescriptor.getProperties(codegen: ImplementationBodyCodegen) =
+            valueParameters.mapNotNull { codegen.bindingContext.get(BindingContext.VALUE_PARAMETER_AS_PROPERTY, it) }
+
+    val ClassDescriptor.primaryConstructor
+        get() = constructors.first { it.isPrimary }
+
+    companion object {
+        val annotations = listOf("de.hanno.kotlin.compiler.plugins.annotations.Wither")
     }
 }
